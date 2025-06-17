@@ -62,8 +62,6 @@ You can refer to `syntax.txt` for supported commands and examples.
 
 -  **B-Tree Indexing**: Replace or complement the current linear search with B-Tree-based indexing for efficient query execution and record lookup.
 -  **Query Optimization**: Implement a query planner and optimizer for better performance on complex queries.
--  **Transactions & Concurrency**: Support for ACID properties using locking or MVCC.
--  **Persistence Format**: Shift to a binary format with headers and page management for better disk usage.
 -  **Support for More SQL Features**: Add AND/OR for conditons in WHERE clauses, JOINs, aggregate functions, etc.
 
 
