@@ -127,10 +127,21 @@ bool StorageEngine::insertRecord(const string& table, const vector<string>& reco
 
 vector<vector<string>> StorageEngine::selectWhere(const string& table, int colIndex, const string& op, const string& value) {
     ifstream in(table + ".txt");
+    if (!in.is_open()) return {};
 
-    string line;
+    ifstream schemaIn(table + ".schema");
+    if (!schemaIn.is_open()) return {};
+
+    vector<string> colTypes;
+    string type, name;
+    while (schemaIn >> type >> name) {
+        colTypes.push_back(type);
+    }
+
+    bool isInt = (colIndex < colTypes.size() && colTypes[colIndex] == "INT");
+
     vector<vector<string>> result;
-
+    string line;
     while (getline(in, line)) {
         stringstream ss(line);
         string val;
@@ -138,23 +149,49 @@ vector<vector<string>> StorageEngine::selectWhere(const string& table, int colIn
         while (getline(ss, val, ',')) row.push_back(val);
 
         if (colIndex < row.size()) {
-            if ((op == ">" && row[colIndex] > value) ||
-                (op == "<" && row[colIndex] < value) ||
-                (op == "=" && row[colIndex] == value)) {
-                result.push_back(row);
+            bool match = false;
+            if (isInt) {
+                try {
+                    int rowVal = stoi(row[colIndex]);
+                    int compVal = stoi(value);
+                    if (op == ">" && rowVal > compVal) match = true;
+                    else if (op == "<" && rowVal < compVal) match = true;
+                    else if (op == "=" && rowVal == compVal) match = true;
+                } catch (...) {
+                    cerr << FAIL<<"[!] ERROR: Invalid INT value in comparison."<<DEFAULT<<endl;
+                    continue;
+                }
+            } else {
+                string rowVal = row[colIndex];
+                if (op == ">" && rowVal > value) match = true;
+                else if (op == "<" && rowVal < value) match = true;
+                else if (op == "=" && rowVal == value) match = true;
             }
+
+            if (match) result.push_back(row);
         }
     }
+
     return result;
 }
 
+
 bool StorageEngine::deleteWhere(const string& table, int colIndex, const string& op, const string& value) {
     ifstream in(table + ".txt");
-    if(!in.is_open()){
-        cerr<<FAIL<<"[!] ERROR: Table '"<<table<<"'does not exist.\n"<<DEFAULT;
-        return false;
+    if (!in.is_open()) return false;
+
+    ifstream schemaIn(table + ".schema");
+    if (!schemaIn.is_open()) return false;
+
+    vector<string> colTypes;
+    string type, name;
+    while (schemaIn >> type >> name) {
+        colTypes.push_back(type);
     }
-    vector<vector<string>> records;
+
+    bool isInt = (colIndex < colTypes.size() && colTypes[colIndex] == "INT");
+
+    vector<string> remainingRows;
     string line;
 
     while (getline(in, line)) {
@@ -162,37 +199,65 @@ bool StorageEngine::deleteWhere(const string& table, int colIndex, const string&
         string val;
         vector<string> row;
         while (getline(ss, val, ',')) row.push_back(val);
-        records.push_back(row);
+
+        if (colIndex >= row.size()) continue;
+
+        bool match = false;
+
+        if (isInt) {
+            try {
+                int rowVal = stoi(row[colIndex]);
+                int compVal = stoi(value);
+                if (op == ">" && rowVal > compVal) match = true;
+                else if (op == "<" && rowVal < compVal) match = true;
+                else if (op == "=" && rowVal == compVal) match = true;
+            } catch (...) {
+                cerr << FAIL<<"[!] ERROR: Invalid INT value in comparison."<<DEFAULT<<endl;;
+                continue;
+            }
+        } else {
+            string rowVal = row[colIndex];
+            if (op == ">" && rowVal > value) match = true;
+            else if (op == "<" && rowVal < value) match = true;
+            else if (op == "=" && rowVal == value) match = true;
+        }
+
+        if (!match) {
+            string newLine;
+            for (size_t i = 0; i < row.size(); i++) {
+                newLine += row[i];
+                if (i < row.size() - 1) newLine += ",";
+            }
+            remainingRows.push_back(newLine);
+        }
     }
+
     in.close();
 
     ofstream out(table + ".txt", ios::trunc);
-    for (const auto& row : records) {
-        if (!((op == ">" && row[colIndex] > value) ||
-              (op == "<" && row[colIndex] < value) ||
-              (op == "=" && row[colIndex] == value))) {
-            for (size_t i = 0; i < row.size(); ++i) {
-                out << row[i];
-                if (i != row.size() - 1) out << ",";
-            }
-            out << "\n";
-        }
+    if (!out.is_open()) return false;
+
+    for (const auto& rowLine : remainingRows) {
+        out << rowLine << "\n";
     }
+
     out.close();
     return true;
 }
 
-bool StorageEngine::updateWhere(const string& table,int colIndex,const string& op,const string& value,const vector<string>& newRecord,vector<string>& type){
+
+bool StorageEngine::updateWhere(const string& table, int colIndex, const string& op, const string& value,
+                                const vector<string>& newRecord, vector<string>& type) {
 
     ifstream in(table + ".txt");
-    if(!in.is_open()){
-        cerr<<FAIL<<"[!] ERROR: Table '"<<table<<"'does not exist.\n"<<DEFAULT;
+    if (!in.is_open()) {
+        cerr << FAIL << "[!] ERROR: Table '" << table << "' does not exist.\n" << DEFAULT;
         return false;
     }
+
+    // Read all rows
     vector<vector<string>> records;
     string line;
-
-    // Read all records
     while (getline(in, line)) {
         stringstream ss(line);
         string val;
@@ -202,45 +267,76 @@ bool StorageEngine::updateWhere(const string& table,int colIndex,const string& o
     }
     in.close();
 
-
-    ifstream schema(table+".schema");
+    // Read schema for column types
+    ifstream schema(table + ".schema");
     vector<string> COL_TYPE;
-    string TYPE,NAME;
-    while(schema>>TYPE>>NAME){
+    string TYPE, NAME;
+    while (schema >> TYPE >> NAME) {
         COL_TYPE.push_back(TYPE);
     }
     schema.close();
 
-    // Apply updates
+    bool isInt = (colIndex < COL_TYPE.size() && COL_TYPE[colIndex] == "INT");
+
     vector<vector<string>> updatedRecords;
+
     for (const auto& row : records) {
-        if (colIndex < row.size()) {
-            bool match = false;
+        if (colIndex >= row.size()) {
+            updatedRecords.push_back(row);  // malformed row, skip update
+            continue;
+        }
+
+        bool match = false;
+
+        if (isInt) {
+            try {
+                int rowVal = stoi(row[colIndex]);
+                int compVal = stoi(value);
+                if (op == ">" && rowVal > compVal) match = true;
+                else if (op == "<" && rowVal < compVal) match = true;
+                else if (op == "=" && rowVal == compVal) match = true;
+            } catch (...) {
+                cerr << FAIL << "[!] ERROR: Invalid INT value during comparison.\n" << DEFAULT;
+                updatedRecords.push_back(row);
+                continue;
+            }
+        } else {
             if (op == ">" && row[colIndex] > value) match = true;
             else if (op == "<" && row[colIndex] < value) match = true;
             else if (op == "=" && row[colIndex] == value) match = true;
-
-            if (match) {
-                vector<string> updatedRow = row;
-                for (size_t i = 0; i < newRecord.size(); ++i) {
-                    if (!newRecord[i].empty()) {
-                        if(type[i]!=COL_TYPE[i]){
-                            cerr<<FAIL<<"[!] ERROR : INVALID TYPE,EXPECTED '"<<COL_TYPE[i]<<"' FOUND '"<<type[i]<<"'."<<endl<<DEFAULT;
-                            return false;
-                        }
-                        updatedRow[i] = newRecord[i];
-                    }
-                }
-                updatedRecords.push_back(updatedRow);
-                continue;
-            }
         }
-        // If not matched, keep row as is
-        updatedRecords.push_back(row);
+
+        if (match) {
+            vector<string> updatedRow = row;
+
+            for (size_t i = 0; i < newRecord.size(); ++i) {
+                if (!newRecord[i].empty()) {
+                    if (i >= COL_TYPE.size()) {
+                        cerr << FAIL << "[!] ERROR: Column index out of bounds during update.\n" << DEFAULT;
+                        return false;
+                    }
+
+                    if (type[i] != COL_TYPE[i]) {
+                        cerr << FAIL << "[!] ERROR: INVALID TYPE. Expected '" << COL_TYPE[i]
+                             << "' but found '" << type[i] << "'.\n" << DEFAULT;
+                        return false;
+                    }
+
+                    updatedRow[i] = newRecord[i];
+                }
+            }
+            updatedRecords.push_back(updatedRow);
+        } else {
+            updatedRecords.push_back(row);  //if not matched,keep as it is
+        }
     }
 
-    // Write back to file
     ofstream out(table + ".txt", ios::trunc);
+    if (!out.is_open()) {
+        cerr << FAIL << "[!] ERROR: Could not open table file for writing.\n" << DEFAULT;
+        return false;
+    }
+
     for (const auto& row : updatedRecords) {
         for (size_t i = 0; i < row.size(); ++i) {
             out << row[i];
@@ -248,6 +344,7 @@ bool StorageEngine::updateWhere(const string& table,int colIndex,const string& o
         }
         out << "\n";
     }
+
     out.close();
     return true;
 }
