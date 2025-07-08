@@ -1,5 +1,5 @@
 #include "exec.hpp"
-#include "../storage/storage.cpp"
+#include "../storage/storage.hpp"
 #include <iostream>
 #include <fstream>
 #include "director_utils.hpp"
